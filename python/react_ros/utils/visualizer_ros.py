@@ -1,3 +1,4 @@
+from tracemalloc import start
 import numpy as np
 from typing import Dict, List
 from visualization_msgs.msg import Marker, MarkerArray
@@ -47,64 +48,93 @@ class ReactVisualizerRos:
         stamp: rospy.Time,
         prev_scan_id: int,
         frame_id: str = "map",
-        offset_z: float = 3.0,
+        offset_z_nodes: float = 3.0,
+        offset_z_clusters: float = 6.0,
     ):
         if not markers_msg.markers:
             markers_msg.markers = []
-        set_color = [c / 255 for c in COCO_COLORS[instance_cluster.get_class_id()]]
+        cluster_color = [c / 255 for c in COCO_COLORS[instance_cluster.get_class_id()]]
         position_histories = instance_cluster.get_cluster_position_history(
             [prev_scan_id]
         )
+        inst_ids = []
+        positions = []
         for instance_id, pos in position_histories.items():
             if prev_scan_id not in pos.keys():
                 continue
-            node_viz_msg = self.create_node_viz_msg(
-                color=set_color,
-                pos=pos[prev_scan_id],
+            node_viz_msg = self.create_cube_msg(
+                stamp=stamp,
+                ns="Instance " + instance_cluster.get_name() + " " + str(instance_id),
+                frame_id=frame_id,
+                marker_id=instance_id,
+                pos=pos[prev_scan_id] - np.array([0, 0, offset_z_nodes]),
+                color=cluster_color,
+            )
+            positions.append(pos[prev_scan_id])
+            inst_ids.append(instance_id)
+            markers_msg.markers.append(node_viz_msg)
+        if len(positions) > 0:
+            cluster_pos = np.array(positions).mean(axis=0)
+            cluster_viz = self.create_cluster_viz_msg(
+                color=cluster_color,
+                cluster_pos=cluster_pos,
+                node_pos=positions,
                 stamp=stamp,
                 frame_id=frame_id,
-                ns="InstanceSet "
-                + instance_cluster.get_name()
-                + " "
-                + str(instance_cluster.cluster_id),
-                marker_id=instance_id,
-                offset_z=offset_z,
+                name=instance_cluster.get_name(),
+                cluster_id=instance_cluster.cluster_id,
+                inst_ids=inst_ids,
+                offset_z_nodes=offset_z_nodes,
+                offset_z_cluster=offset_z_clusters,
             )
-            markers_msg.markers.append(node_viz_msg)
+            markers_msg.markers += cluster_viz
 
-    def create_node_viz_msg(
+    def create_cluster_viz_msg(
         self,
         color: List,
-        pos: np.ndarray,
+        cluster_pos: np.ndarray,
+        node_pos: List[np.ndarray],
         stamp: rospy.Time,
         frame_id: str,
-        ns: str,
-        marker_id: int,
-        offset_z: float,
-    ) -> Marker:
-        node_viz_msg = Marker()
-        node_viz_msg.header.stamp = stamp
-        node_viz_msg.header.frame_id = frame_id
-        node_viz_msg.ns = ns
-        node_viz_msg.id = marker_id
-        node_viz_msg.type = Marker.CUBE
-        node_viz_msg.action = Marker.ADD
-        node_viz_msg.pose.position.x = pos[0]
-        node_viz_msg.pose.position.y = pos[1]
-        # Move them down to easily visualize them
-        node_viz_msg.pose.position.z = pos[2] - offset_z
-        node_viz_msg.pose.orientation.x = 0.0
-        node_viz_msg.pose.orientation.y = 0.0
-        node_viz_msg.pose.orientation.z = 0.0
-        node_viz_msg.pose.orientation.w = 1.0
-        node_viz_msg.scale.x = 0.2
-        node_viz_msg.scale.y = 0.2
-        node_viz_msg.scale.z = 0.2
-        node_viz_msg.color.r = color[0]
-        node_viz_msg.color.g = color[1]
-        node_viz_msg.color.b = color[2]
-        node_viz_msg.color.a = 0.7
-        return node_viz_msg
+        name: str,
+        cluster_id: int,
+        inst_ids: List[int],
+        offset_z_nodes: float,
+        offset_z_cluster: float,
+    ) -> List[Marker]:
+        cluster_viz = []
+        cluster_viz_msg = self.create_cube_msg(
+            stamp=stamp,
+            frame_id=frame_id,
+            ns=f"{name} cluster {cluster_id}",
+            marker_id=cluster_id * 10000,
+            pos=cluster_pos - np.array([0, 0, offset_z_cluster]),
+            color=color,
+        )
+        cluster_viz.append(cluster_viz_msg)
+        cluster_text_msg = self.create_text_msg(
+            stamp=stamp,
+            frame_id=frame_id,
+            ns=f"text {name} cluster {cluster_id}",
+            id=cluster_id * 100000,
+            text=f"{name} {cluster_id}",
+            pos=cluster_pos - np.array([0, 0, offset_z_cluster + 0.5]),
+        )
+        cluster_viz.append(cluster_text_msg)
+
+        assert len(inst_ids) == len(node_pos)
+        for node_p, id in zip(node_pos, inst_ids):
+            cluster_node_msg = self.create_arrow_msg(
+                stamp=stamp,
+                frame_id=frame_id,
+                ns=f"{name} cluster {cluster_id} - instance {id}",
+                marker_id=cluster_id * 10000 + id,
+                start=cluster_pos - np.array([0, 0, offset_z_cluster]),
+                end=node_p - np.array([0, 0, offset_z_nodes]),
+                scale=[0.01, 0.05, 0.05],
+            )
+            cluster_viz.append(cluster_node_msg)
+        return cluster_viz
 
     def publish_position_updates(
         self,
@@ -146,61 +176,17 @@ class ReactVisualizerRos:
             if new_scan_id in ph and ref_scan_id in ph:
                 prev_pos = ph[ref_scan_id]
                 new_pos = ph[new_scan_id]
-                pos_update_msg = self.create_position_updates_msg(
+                pos_update_msg = self.create_arrow_msg(
                     stamp=stamp,
                     frame_id=frame_id,
                     ns=f"Instance {instance_cluster.get_name()} {inst_id}",
                     marker_id=instance_cluster.cluster_id,
-                    prev_pos=prev_pos,
-                    new_pos=new_pos,
-                    offset_z=offset_z,
+                    start=prev_pos - np.array([0, 0, offset_z]),
+                    end=new_pos,
+                    scale=[0.05, 0.1, 0.1],
                 )
                 position_updates_msg.markers.append(pos_update_msg)
         return position_updates_msg
-
-    def create_position_updates_msg(
-        self,
-        stamp: rospy.Time,
-        frame_id: str,
-        ns: str,
-        marker_id: int,
-        prev_pos: np.ndarray,
-        new_pos: np.ndarray,
-        offset_z: float,
-    ) -> Marker:
-        pos_update_msg = Marker()
-        pos_update_msg.header.stamp = stamp
-        pos_update_msg.header.frame_id = frame_id
-        pos_update_msg.ns = ns
-        pos_update_msg.id = marker_id
-        pos_update_msg.type = Marker.ARROW
-        pos_update_msg.action = Marker.ADD
-
-        start_point = Point()
-        start_point.x = prev_pos[0]
-        start_point.y = prev_pos[1]
-        start_point.z = prev_pos[2] - offset_z
-
-        end_point = Point()
-        end_point.x = new_pos[0]
-        end_point.y = new_pos[1]
-        end_point.z = new_pos[2]
-
-        pos_update_msg.points = []
-        pos_update_msg.points.append(start_point)
-        pos_update_msg.points.append(end_point)
-
-        # Set arrow properties (color, scale)
-        pos_update_msg.scale.x = 0.05  # Shaft diameter
-        pos_update_msg.scale.y = 0.1  # Head diameter
-        pos_update_msg.scale.z = 0.1  # Head length
-
-        pos_update_msg.color.r = 0.0
-        pos_update_msg.color.g = 0.0
-        pos_update_msg.color.b = 0.0
-        pos_update_msg.color.a = 1.0  # Alpha (transparency)
-        # pos_update_msg.lifetime = rospy.Duration(1)
-        return pos_update_msg
 
     def get_delete_all_markers_msg(
         self, stamp: rospy.Time, frame_id: str
@@ -214,3 +200,107 @@ class ReactVisualizerRos:
         markers_del.markers = [marker_del]
 
         return markers_del
+
+    def create_cube_msg(
+        self,
+        stamp: rospy.Time,
+        frame_id: str,
+        ns: str,
+        marker_id: int,
+        pos: np.ndarray,
+        color: List,
+    ) -> Marker:
+        cube_msg = Marker()
+        cube_msg.header.stamp = stamp
+        cube_msg.header.frame_id = frame_id
+        cube_msg.ns = ns
+        cube_msg.id = marker_id
+        cube_msg.type = Marker.CUBE
+        cube_msg.action = Marker.ADD
+        cube_msg.pose.position.x = pos[0]
+        cube_msg.pose.position.y = pos[1]
+        cube_msg.pose.position.z = pos[2]
+        cube_msg.pose.orientation.x = 0.0
+        cube_msg.pose.orientation.y = 0.0
+        cube_msg.pose.orientation.z = 0.0
+        cube_msg.pose.orientation.w = 1.0
+        cube_msg.scale.x = 0.2
+        cube_msg.scale.y = 0.2
+        cube_msg.scale.z = 0.2
+        cube_msg.color.r = color[0]
+        cube_msg.color.g = color[1]
+        cube_msg.color.b = color[2]
+        cube_msg.color.a = 0.7
+        return cube_msg
+
+    def create_arrow_msg(
+        self,
+        stamp: rospy.Time,
+        frame_id: str,
+        ns: str,
+        marker_id: int,
+        start: np.ndarray,
+        end: np.ndarray,
+        scale: List = [0.05, 0.1, 0.1],
+    ):
+
+        arrow_msg = Marker()
+        arrow_msg.header.stamp = stamp
+        arrow_msg.header.frame_id = frame_id
+        arrow_msg.ns = ns
+        arrow_msg.id = marker_id
+        arrow_msg.type = Marker.ARROW
+        arrow_msg.action = Marker.ADD
+
+        start_point = Point()
+        start_point.x = start[0]
+        start_point.y = start[1]
+        start_point.z = start[2]
+
+        end_point = Point()
+        end_point.x = end[0]
+        end_point.y = end[1]
+        end_point.z = end[2]
+
+        arrow_msg.points = []
+        arrow_msg.points.append(start_point)
+        arrow_msg.points.append(end_point)
+
+        # Set arrow properties (color, scale)
+        arrow_msg.scale.x = scale[0]  # Shaft diameter
+        arrow_msg.scale.y = scale[1]  # Head diameter
+        arrow_msg.scale.z = scale[2]  # Head length
+
+        arrow_msg.color.r = 0.0
+        arrow_msg.color.g = 0.0
+        arrow_msg.color.b = 0.0
+        arrow_msg.color.a = 1.0  # Alpha (transparency)
+        return arrow_msg
+
+    def create_text_msg(
+        self,
+        stamp: rospy.Time,
+        frame_id: str,
+        ns: str,
+        id: int,
+        text: str,
+        pos: np.ndarray,
+    ) -> Marker:
+
+        text_msg = Marker()
+        text_msg.header.stamp = stamp
+        text_msg.header.frame_id = frame_id
+        text_msg.ns = ns
+        text_msg.id = id
+        text_msg.type = Marker.TEXT_VIEW_FACING
+        text_msg.text = text
+        text_msg.pose.position.x = pos[0]
+        text_msg.pose.position.y = pos[1]
+        # Move them down to easily visualize them
+        text_msg.pose.position.z = pos[2]
+        text_msg.scale.z = 0.6
+        text_msg.color.r = 0
+        text_msg.color.g = 0
+        text_msg.color.b = 0
+        text_msg.color.a = 1
+        return text_msg

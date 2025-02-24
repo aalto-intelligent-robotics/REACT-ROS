@@ -1,4 +1,3 @@
-import time
 import numpy as np
 import os
 from typing import Dict, List, Set, Tuple
@@ -33,7 +32,7 @@ logger = getLogger(name=__name__, log_file="react_ros.log")
 
 class ReactRosModule:
     def __init__(self):
-        rospy.init_node("react_ros")
+        rospy.init_node("react_ros_node")
         logger.info("Starting ReactRosModule.")
         self._init()
 
@@ -170,7 +169,7 @@ class ReactRosModule:
                     view_header, InstanceViewHeader
                 ), "Invalid InstanceViewHeader in ObjectNodeInfo"
                 mask_ids.add(view_header.mask_id)
-            object_node = self.get_object_node_online(
+            object_node = self._get_object_node_online(
                 scan_id=self.new_scan_id,
                 mask_ids=mask_ids,
                 node_id=object_node_msg.node_id,
@@ -196,16 +195,7 @@ class ReactRosModule:
             self.manager.get_instance_clusters(), stamp=stamp_now
         )
 
-    #
-    # def _get_embedding(self, mask_ids: Set):
-    #     embedding_list = []
-    #     for id in mask_ids:
-    #         if id in self.embedding_library.keys():
-    #             embedding_list.append(self.embedding_library[id][None, :])
-    #     embedding = torch.quantile(torch.cat(embedding_list), q=0.5, dim=0)
-    #     return embedding
-
-    def get_object_node_online(
+    def _get_object_node_online(
         self,
         scan_id: int,
         mask_ids: Set,
