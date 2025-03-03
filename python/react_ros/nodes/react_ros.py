@@ -8,7 +8,7 @@ from copy import deepcopy
 import rospy
 from cv_bridge import CvBridge
 
-from hydra_stretch_msgs.msg import (
+from hydra_msgs.msg import (
     HydraVisionPacket,
     InstanceViewHeader,
     Mask,
