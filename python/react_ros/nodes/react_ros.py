@@ -18,10 +18,10 @@ from hydra_msgs.msg import (
 
 from react.core.object_node import ObjectNode
 from react.core.react_manager import ReactManager
-from react.net.embedding_net import get_embedding_model
 from react.utils.logger import getLogger
 from react.utils.read_data import get_bbox
 from react.utils.image import preprocess_image, get_instance_view
+from react_embedding.embedding_net import get_embedding_model
 from react_ros.utils.visualizer_ros import ReactVisualizerRos
 
 
