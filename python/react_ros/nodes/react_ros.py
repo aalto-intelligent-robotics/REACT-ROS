@@ -91,7 +91,7 @@ class ReactRosModule:
         )
         self.embedding_library: Dict[int, Tensor] = {}  # {mask_id -> embedding}
         self.manager = ReactManager(
-            match_threshold=self.match_threshold, embedding_model=self.embedding_model
+            visual_difference_threshold=self.match_threshold, embedding_model=self.embedding_model
         )
         self._load_ref_dsg(ref_dsg=os.path.join(DSG_PATH, self.ref_dsg))
 
